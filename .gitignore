@@ -1,3 +1,7 @@
+# Winx URL
+configuration.json
+winx_webhook.db
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
