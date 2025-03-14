@@ -1,106 +1,34 @@
-import sqlite3
-import atexit
-import requests
+from datetime import datetime
 import logging
-import json
-from sqlite3 import Cursor, Connection
-from typing import Optional
 
-x_user: dict = {
-    "username":"monsterhunter",
-    "username_id":306490355
-}
+from database.winx_database import WinxDatabaseQuery
+from config.configuration import target_user
 
-def get_config() -> json:
-    with open('configuration.json', 'r') as file:
-        x_config = json.load(file)
-    return x_config
+winx_db = WinxDatabaseQuery()
 
-def x_get_posts(id: int, x_config: dict) -> dict:
-    url = f"https://api.twitter.com/2/users/{id}/tweets"
-    headers = {"Authorization": f"Bearer {x_config['x_api_bearer_token']}"}
-    params = {"max_results": 5, "tweet.fields":"created_at"}
+def get_new_posts(x_last_posts: dict, last_date: str) -> list:
+    x_posts_check: list = [
+        [
+            posts['id'], 
+            posts['text'], 
+            posts['created_at'],
+            0 if datetime.fromisoformat(posts['created_at'].replace('Z', '+00:00')) > datetime.fromisoformat(last_date.replace('Z', '+00:00')) else 1
+        ] 
+        for posts in x_last_posts
+    ]
+    x_new_posts: list = [posts for posts in x_posts_check if posts[3] == 0]
+    return x_new_posts
 
-    try:
-        response = requests.get(url, headers=headers, params=params)
+def insert_new_posts(x_new_posts: list) -> None:
+    if x_new_posts:
+        winx_db.insert(x_new_posts)
+    else:
+        print(f'No new post to insert in WinxDb')
 
-        if response.status_code == 429:
-            print("status_code 429")
-            return None
+def post_for_publish() -> list:
+    publish_list: list = winx_db.post_for_publish()
+    if not publish_list:
+        logging.info(f'No post for publish - {publish_list}')
+    publish_links: list = [(post[0], f"https://x.com/{target_user["username"]}/status/{post[0]}") for post in publish_list]
 
-        response.raise_for_status()
-        response_dict = response.json()
-
-        if 'data' not in response_dict:
-            logging.warning(f"No data found in API response for user {id}. Response: {response_dict}")
-            return None
-        return response_dict['data']
-    
-    except requests.exceptions.RequestException as e:
-        logging.error(f"HTTP Request failed: {e}")
-    except ValueError:
-        logging.error(f"Failed to decode JSON response: {response.text}")
-
-    return None
-
-connection: Optional[Connection] = None
-winx_table: str = "last_posts"
-winx_db: str = "winx_webhook"
-
-def get_cursor() -> Cursor:
-    global connection
-    global winx_db
-
-    if connection is None:
-        connection = sqlite3.connect(f"{winx_db}.db")
-        atexit.register(close_connection)
-        print(f"{winx_db} connected")
-    cur: Cursor = connection.cursor()
-    return cur
-
-def close_connection() -> None:
-    global connection
-    global winx_db
-
-    if connection:
-        connection.close()
-        print(f"{winx_db} connection closed")
-
-def winxdb_get_last_date() -> str:
-    cur: Cursor = get_cursor()
-    res: Cursor = cur.execute(f"select max(created_at) from {winx_table}")
-
-    last_date = res.fetchone()
-    cur.close()
-    print(f'get last date sucess -> {last_date}')
-    return last_date[0]
-
-def winxdb_insert(posts: list) -> None:
-    cur: Cursor = get_cursor()
-    columns: str = "x_id, post_content, created_at, published"
-    try:
-        cur.executemany(f"insert into {winx_table} ({columns}) values (?, ? ,? ,?)", posts)
-        cur.connection.commit()
-    except Exception as e:
-        print(f"Error when inserting values to {winx_table} -> ", e)
-    finally:
-        cur.close()
-        print(f"Post of X id {posts[0]}, inserted")
-    
-def winxdb_post_for_publish() -> list:
-    cur: Cursor = get_cursor()
-    posts_publish: Cursor = cur.execute(f"select * from {winx_table} where published = 0")
-    posts: list = posts_publish.fetchall()
-    cur.close()
-    return posts
-
-def winxdb_update_published(update_id: int) -> None:
-    cur: Cursor = get_cursor()
-    try:
-        cur.execute(f"update {winx_table} set published = 1 where x_id = {update_id}")
-        cur.connection.commit()
-        print(f"winx_id = {update_id} updated to 1 in {winx_table}")
-    except Exception as e:
-        print(f"Cannot update table {winx_table}", e)
-    finally:
-        cur.close()
+    return publish_links

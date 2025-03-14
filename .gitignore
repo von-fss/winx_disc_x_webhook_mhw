@@ -1,5 +1,5 @@
 # Winx URL
-configuration.json
+config/configuration.py
 winx_webhook.db
 
 # Byte-compiled / optimized / DLL files
